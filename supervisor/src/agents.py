@@ -1,67 +1,76 @@
-from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
-from langchain.chat_models import init_chat_model
-from dotenv import load_dotenv
+import asyncio
+import logging
 import os
+from typing import List, Dict, Any
 
+import httpx
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langgraph.checkpoint.memory import InMemorySaver
+
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Claude Opus 5.5 não aceita "temperature" (retorna erro 400); o modelo
 # sempre raciocina antes de responder, e max_tokens inclui esse raciocínio.
 _llm = init_chat_model(
     model="anthropic:claude-opus-5-5",
-    api_key=os.getenv('ANTHROPIC_API_KEY'),
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
     max_tokens=16000,
 )
 
-agente_cartao_credito = create_agent(
-    _llm,
-    tools=[],
-    system_prompt=(
-        "Você é um especialista em cartão de crédito do banco MDBank. "
-        "Ajude o cliente com dúvidas, solicitação e limites."
+
+class RouterOutput(BaseModel):
+    agents: List[str] = Field(
+        description="Lista de agentes que devem responder a pergunta"
     )
-)
 
-agente_abertura_conta = create_agent(
-    _llm,
-    tools=[],
-    system_prompt=(
-        "Você é um especialista em abertura de contas do banco MDBank. "
-        "Ajude o cliente a abrir uma conta e explique os tipos disponíveis."
-    ),
-)
 
-def classificar_pergunta(pergunta: str) -> str:
+parser = JsonOutputParser(pydantic_object=RouterOutput)
+
+AGENTES_DISPONIVEIS = ["cartao_credito", "abrir_conta"]
+
+async def classifique_intencao_do_usuario(
+    query: str
+) -> List[Dict]:
+
     prompt = f"""
-    Classifique a intenção do usuário.
+    Você é o roteador de atendimento do banco MDBank.
+    Escolha quais agentes devem responder à pergunta do usuário.
+    Pode escolher mais de um, se a pergunta tratar de mais de um assunto,
+    ou nenhum, se não tiver relação com os agentes disponíveis.
 
-    Possíveis agentes:
+    Agentes disponiveis:
     cartao_credito
     abrir_conta
 
-    Pergunta: {pergunta}
+    Pergunta: {query}
 
-    Responda apenas com o nome do agente.
+    {parser.get_format_instructions()}
     """
-    resposta = _llm.invoke(prompt)
+    
+    resposta = await _llm.ainvoke(prompt)
+
     # O Claude devolve uma lista de blocos (raciocínio + texto); .text junta só o texto
-    return resposta.text.strip().lower()
+    saida = parser.parse(resposta.text)
 
+    # Descarta nomes que não existem no grafo, senão o Send aponta para um nó inexistente
+    agentes_escolhidos = [
+        agente for agente in saida.get("agents", [])
+        if agente in AGENTES_DISPONIVEIS
+    ]
 
-async def executar_supervisor(texto_usuario: str) -> str:
-    agente = classificar_pergunta(texto_usuario)
+    logger.info(f"Agentes escolhidos pelo roteador: {agentes_escolhidos}")
 
-    if agente == "cartao_credito":
-        resultado = agente_cartao_credito.invoke(
-            {"messages": [HumanMessage(content=texto_usuario)]}
-        )
-    elif agente == "abrir_conta":
-        resultado = agente_abertura_conta.invoke(
-            {"messages": [HumanMessage(content=texto_usuario)]}
-        )
-    else:
-        return "Não consegui entender sua solicitação"
+    return [
+        {
+            "query" : query,
+            "agent" : agente
+        }for agente in agentes_escolhidos
+    ]
 
-    mensagem_ia = resultado["messages"][-1]
-    return mensagem_ia.text

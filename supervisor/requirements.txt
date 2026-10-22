@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+langgraph
 langchain
 langchain-anthropic
 langchain-community
