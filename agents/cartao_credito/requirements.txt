@@ -1,7 +1,8 @@
-fastapi
+a2a-sdk[http-server]
+httpx
+pydantic
 uvicorn
 langchain
 langchain-anthropic
 langchain-community
-httpx
 python-dotenv

@@ -1,24 +1,29 @@
 import logging
 import httpx
+import uuid
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from typing import TypedDict, Annotated
 from operator import add
 
+from a2a.client import A2ACardResolver, ClientFactory, ClientConfig
+from a2a.types import Message, Part, Role, TextPart
+
 
 from src.agents import classifique_intencao_do_usuario
 
 logger = logging.getLogger(__name__)
 
-# Nome do serviço de cada agente no docker-compose.yml (é o hostname na rede do Docker)
+HTTPX_CLIENT = httpx.AsyncClient(timeout=30)
+
 AGENTS = {
-    "cartao_credito": "cartao_credito_agent",
-    "abrir_conta": "abrir_conta_agent",
+    "cartao_credito": "http://cartao_credito_agent:8000",
+    "abrir_conta": "http://abrir_conta_agent:8000"
 }
 
-# Os agentes raciocinam antes de responder, então a resposta pode demorar
-TIMEOUT_AGENTES = httpx.Timeout(120.0)
+CLIENT_CACHE = {}
+
 
 class State(TypedDict):
     query: str
@@ -26,40 +31,49 @@ class State(TypedDict):
     client_id: str
     responses: Annotated[list[str], add]
 
-async def request_agent(state: State, agent: str) -> str:
-    # Dentro da rede do Docker os containers escutam na 8000;
-    # 8081/8082 são as portas expostas só para a máquina host
-    url = f"http://{agent}:8000/send"
-    payload = {
-        "message": state["query"],
-        "session_id": state["session_id"],
-        "client_id": state["client_id"],
-    }
+async def request_agent(message: str, agent_url: str) -> str:
+    if agent_url not in CLIENT_CACHE:
+        logger.info(f"Descobrindo AgentCard em {agent_url}")
 
-    try:
-        logger.info(
-            f"Enviando requisição para {agent} em {url} com payload: {payload}"
+        resolver = A2ACardResolver(
+            http_client=HTTPX_CLIENT,
+            base_url=agent_url,
         )
 
-        async with httpx.AsyncClient(timeout=TIMEOUT_AGENTES) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
+        agent_card = await resolver.get_agent_card()
+        logger.info(f"Agent encontrado: {agent_card.name}")
 
-        data = response.json()
-
-        logger.info(
-            f"Resposta recebida do {agent}: {data}"
+        config = ClientConfig(
+            http_client=HTTPX_CLIENT,
+            streaming=False
         )
+        factory = ClientFactory(config)
+        CLIENT_CACHE[agent_url] = factory.create(agent_card)
 
-        return data.get("resposta", "Resposta não encontrada")
-    except httpx.HTTPError:
-        logger.exception(f"Erro ao chamar o agente {agent}")
-        return "Desculpe, não consegui obter resposta deste atendimento agora."
+    client = CLIENT_CACHE[agent_url]
+
+    msg = Message(
+        role=Role.user,
+        message_id=str(uuid.uuid4()),
+        parts=[Part(root=TextPart(text=message))],
+    )
+
+    logger.info(f"Enviando mensagem para agente: {message}")
+
+    async for event in client.send_message(msg):
+        if isinstance(event, Message):
+            for part in event.parts:
+                if part.root.kind == "text":
+                    return part.root.text
+                
+    return "Sem resposta do agente."
 
 
 async def no_de_roteamento(state: State):
     query = state.get("query", "")
+
     classifications = await classifique_intencao_do_usuario(query)
+
     logger.info(f"Classificação: {classifications}")
     return [
         Send(c["agent"], {
@@ -76,8 +90,15 @@ async def no_de_roteamento(state: State):
 
 
 async def cartao_credito_node(state: State):
+    
+    query = state.get("query","")
+
     logger.info("Executando agente CARTAO_CREDITO")
-    resposta = await request_agent(state, AGENTS["cartao_credito"])
+
+    resposta = await request_agent(
+        query, 
+        AGENTS["cartao_credito"]
+    )
     return {"responses": [resposta]}
 
 # -----------------------------
@@ -86,8 +107,11 @@ async def cartao_credito_node(state: State):
 
 
 async def abrir_conta_node(state: State):
+    query = state.get("query","")
+
     logger.info("Executando agente ABRIR_CONTA")
-    resposta = await request_agent(state, AGENTS["abrir_conta"])
+
+    resposta = await request_agent(query, AGENTS["abrir_conta"])
     return {"responses": [resposta]}
 
 # -----------------------------
