@@ -15,7 +15,8 @@ from src.agents import classifique_intencao_do_usuario
 
 logger = logging.getLogger(__name__)
 
-HTTPX_CLIENT = httpx.AsyncClient(timeout=30)
+# O agente raciocina antes de responder; 30s pode não bastar
+HTTPX_CLIENT = httpx.AsyncClient(timeout=120)
 
 AGENTS = {
     "cartao_credito": "http://cartao_credito_agent:8000",
@@ -36,7 +37,7 @@ async def request_agent(message: str, agent_url: str) -> str:
         logger.info(f"Descobrindo AgentCard em {agent_url}")
 
         resolver = A2ACardResolver(
-            http_client=HTTPX_CLIENT,
+            httpx_client=HTTPX_CLIENT,
             base_url=agent_url,
         )
 
@@ -44,7 +45,7 @@ async def request_agent(message: str, agent_url: str) -> str:
         logger.info(f"Agent encontrado: {agent_card.name}")
 
         config = ClientConfig(
-            http_client=HTTPX_CLIENT,
+            httpx_client=HTTPX_CLIENT,
             streaming=False
         )
         factory = ClientFactory(config)
