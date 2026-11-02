@@ -62,4 +62,5 @@ async def run_agent(mensagem: str, thread_id: str = "1"):
         {"configurable": {"thread_id": thread_id}},
     )
     
-    return resultado["messages"][-1].content    
+    # O Claude devolve uma lista de blocos (raciocínio + texto); .text junta só o texto
+    return resultado["messages"][-1].text
