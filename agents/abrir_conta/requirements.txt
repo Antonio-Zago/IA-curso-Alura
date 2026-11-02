@@ -7,3 +7,4 @@ langchain-anthropic
 langchain-community
 langchain-mcp-adapters
 python-dotenv
+duckduckgo-mcp-server==0.7.0

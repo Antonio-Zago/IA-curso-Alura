@@ -19,7 +19,13 @@ client = MultiServerMCPClient(
         "conta": {
             "transport": "http",
             "url": "http://recursos:8000/mcp_gateway",
-        } # type: ignore
+        }, # type: ignore
+        # Roda como subprocesso dentro deste container (pacote instalado via requirements.txt)
+        "ddg-search": {
+            "transport": "stdio",
+            "command": "duckduckgo-mcp-server",
+            "args": [],
+        },
     }
 )
 
@@ -69,6 +75,7 @@ async def build_cartao_agent():
             "================================\n"
             "- Use mensagem da tool\n"
             "- Explique claramente\n"
+            "- Para buscas externas use a tool search do duckduck go, sempre que alguém falar quero buscar\n"
         ),
         checkpointer=memory,
     )
