@@ -5,6 +5,6 @@ uvicorn
 langchain
 langchain-anthropic
 langchain-community
-langchain-mcp-adapters
+langchain-mcp-adapters==0.3.2
 python-dotenv
-duckduckgo-mcp-server==0.7.0
+duckduckgo-mcp-server==0.6.1
