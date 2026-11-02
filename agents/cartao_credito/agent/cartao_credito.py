@@ -31,7 +31,7 @@ async def build_cartao_agent():
     tools = await client.get_tools()
     
     agente_cartoes = create_agent(
-        llm,
+        _llm,
         tools=tools,
         system_prompt=(
             "Você é especialista em cartões do MDBank.\n\n"
