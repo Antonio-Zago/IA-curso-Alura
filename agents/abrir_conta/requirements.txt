@@ -5,4 +5,5 @@ uvicorn
 langchain
 langchain-anthropic
 langchain-community
+langchain-mcp-adapters
 python-dotenv
