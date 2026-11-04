@@ -4,19 +4,34 @@ import AppLayout from "./Layout";
 import ChatBox from "./components/ChatBox";
 import PromptSuggestions from "./components/PromptSuggestions";
 
+// Endereço do supervisor (AG-UI). Pode ser definido em REACT_APP_AGENT_URL;
+// por padrão usa o mesmo host de onde a página foi aberta, na porta 8080.
+// Assim funciona tanto em http://localhost:3000 quanto em http://192.168.x.x:3000.
+const AGENT_URL =
+    process.env.REACT_APP_AGENT_URL ||
+    `${window.location.protocol}//${window.location.hostname}:8080/`;
+
 export default function ChatPage() {
     const { messages, setMessages, loading, setLoading, updateState } =
         useAppState();
 
     async function sendMessage(message) {
-        if (!message.trim()) return;
+        if (!message.trim() || loading) return;
 
-        const userMessage = {
-            id: uuid(),
-            role: "user",
-            content: message,
-        };
-        setMessages((prev) => [...prev, userMessage]);
+        const userMessage = { id: uuid(), role: "user", content: message };
+        const assistantId = uuid();
+        let assistantMessage = "";
+
+        const setAssistantContent = (content) =>
+            setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, content } : m)),
+            );
+
+        setMessages((prev) => [
+            ...prev,
+            userMessage,
+            { id: assistantId, role: "assistant", content: "" },
+        ]);
         setLoading(true);
 
         const payload = {
@@ -36,64 +51,78 @@ export default function ChatPage() {
             forwardedProps: {},
         };
 
-        const response = await fetch("http://localhost:8080/", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Accept: "text/event-stream",
-            },
-            body: JSON.stringify(payload),
-        });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let assistantMessage = "";
-        const assistantId = uuid();
-
-        setMessages((prev) => [
-            ...prev,
-            { id: assistantId, role: "assistant", content: "" },
-        ]);
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
-
-            for (let line of lines) {
-                if (!line.startsWith("data:")) continue;
-                const jsonStr = line.replace("data:", "").trim();
-                if (!jsonStr) continue;
-
-                try {
-                    const event = JSON.parse(jsonStr);
-                    if (event.type === "TEXT_MESSAGE_CONTENT") {
-                        assistantMessage += event.delta;
-                        setMessages((prev) => {
-                            const updated = [...prev];
-                            const index = updated.findIndex((m) => m.id === assistantId);
-                            if (index !== -1)
-                                updated[index].content = assistantMessage;
-                            return updated;
-                        });
-                    }
-
-                    if (event.type === "STATE_UPDATE") {
-                        updateState(event.state);
-                    }
-
-                    if (event.type === "RUN_FINISHED") {
-                        setLoading(false);
-                    }
-                } catch (err) {
-                    console.error(err);
-                }
+        function handleEvent(event) {
+            switch (event.type) {
+                case "TEXT_MESSAGE_CONTENT":
+                    assistantMessage += event.delta;
+                    setAssistantContent(assistantMessage);
+                    break;
+                case "STATE_UPDATE":
+                    updateState(event.state);
+                    break;
+                case "RUN_ERROR":
+                    throw new Error(event.message || "Erro no agente");
+                default:
+                    break;
             }
         }
-        setLoading(false);
+
+        try {
+            const response = await fetch(AGENT_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "text/event-stream",
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            // Um evento SSE pode chegar quebrado entre dois chunks, então
+            // acumulamos no buffer e só processamos eventos completos ("\n\n").
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split("\n\n");
+                buffer = parts.pop();
+
+                for (const part of parts) {
+                    for (const line of part.split("\n")) {
+                        if (!line.startsWith("data:")) continue;
+                        const jsonStr = line.slice(5).trim();
+                        if (!jsonStr) continue;
+
+                        let event;
+                        try {
+                            event = JSON.parse(jsonStr);
+                        } catch (err) {
+                            console.error("Evento inválido:", jsonStr, err);
+                            continue;
+                        }
+                        handleEvent(event);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Erro ao chamar o agente:", err);
+            setAssistantContent(
+                `${assistantMessage}\n\n⚠️ **Erro ao falar com o agente** (${AGENT_URL}): ${err.message}`,
+            );
+        } finally {
+            setLoading(false);
+        }
     }
+
     return (
         <AppLayout>
             {messages.length === 0 ? (
