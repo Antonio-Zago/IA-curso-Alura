@@ -1,3 +1,4 @@
+import { uuid } from "./utils/uuid";
 import { useAppState } from "./StateContext";
 import AppLayout from "./Layout";
 import ChatBox from "./components/ChatBox";
@@ -11,7 +12,7 @@ export default function ChatPage() {
         if (!message.trim()) return;
 
         const userMessage = {
-            id: crypto.randomUUID(),
+            id: uuid(),
             role: "user",
             content: message,
         };
@@ -20,10 +21,10 @@ export default function ChatPage() {
 
         const payload = {
             thread_id: "1",
-            run_id: crypto.randomUUID(),
+            run_id: uuid(),
             messages: [
                 {
-                    id: crypto.randomUUID(),
+                    id: uuid(),
                     role: "user",
                     content: message,
                     user: { id: "user-123" },
@@ -47,7 +48,7 @@ export default function ChatPage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let assistantMessage = "";
-        const assistantId = crypto.randomUUID();
+        const assistantId = uuid();
 
         setMessages((prev) => [
             ...prev,
